@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy,math,pdb,sys
 import time,importlib
-import MMLoader
+import VisionLoader
 from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
 
@@ -14,7 +14,7 @@ class VisionNet(nn.Module):
         VisionNetModel=importlib.import_module('models.'+ vision_model).__getattribute__('MainModel')
         if get_pretrained:
             self.__S__ = VisionNetModel(**kwargs,weights='IMAGENET1K_V1')
-            print("pretrained model is loaded")
+            print("pretrained ResNet is loaded")
         else:
             self.__S__ = VisionNetModel(**kwargs,weights=None)
             print("not pretrained model is loaded")
@@ -68,43 +68,7 @@ class AudioNet(nn.Module):
             #output=output.squeeze(2) 
             nloss=self.__L__.forward(output,label)
             return nloss
-        
-class NOfusionMM(nn.Module):
-    def __init__(self,vision_model,vision_loss,audio_model,audio_loss,get_pretrained,trainfunc,**kwargs):
-        super(NOfusionMM,self).__init__();
 
-        V=VisionNet(vision_model=vision_model,vision_loss=vision_loss,get_pretrained=get_pretrained,**kwargs)
-        A=AudioNet(audio_model=audio_model,audio_loss=audio_loss,get_pretrained=False,**kwargs)
-        self.__V__=V
-        self.__A__=A
-        self.__VS__ = V.__S__
-        ### freeze vision extractor
-        for param in self.__VS__.parameters():
-            param.requires_grad =False
-        self.__VL__ = V.__L__
-        self.__S__ = A.__S__
-        self.__L__ = A.__L__
-
-        LossFunction = importlib.import_module('loss.'+ trainfunc).__getattribute__('LossFunction')
-        print("it's Loss for Distribution")
-        self.__D__ = LossFunction(**kwargs)
-
-
-    def forward(self, vision_data,audio_data,label=None):
-        
-        vision_feature = self.__VS__.forward(vision_data)
-        audio_feature = self.__S__.forward(audio_data)
-        kldloss=self.__D__(vision_feature,audio_feature)
-        return kldloss
-
-
-
-
-
-
-
-
-        
 
 class ModelTrainer(object):
     def __init__(self, embed_model,optimizer, scheduler, mixedprec,**kwargs):
@@ -138,31 +102,33 @@ class ModelTrainer(object):
 
         with tqdm(loader,unit='batch') as tepoch:
             for ii in tepoch: ### seperate data into each modalities?
-                Vdata,Adata,label = ii[0],ii[1],ii[2]
+                Vdata,label = ii[0],ii[1]
                 
                 tepoch.total = tepoch.__len__()
-
-                ##Reset gradients
-                self.__model__.zero_grad();
                 
                 #adjusting data into proper shape
                 #print('before: ',Vdata.shape)
-                
-                ##Forward and Backward passes
                 Vdata=Vdata.reshape(-1,Vdata.size()[-3],Vdata.size()[-2],Vdata.size()[-1])
-                Adata=Adata.unsqueeze(1)
-                # Adata= numpy.repeat(Adata,3,axis=1)
+                
+                #print('after: ',Vdata.shape)
+                #Adata=Adata.squeeze(dim=1)
+
+                ##Reset gradients
+                self.__model__.zero_grad();
+
+                ##Forward and Backward passes
+                # Adata=Adata.unsqueeze(1)
                 #print(Adata.shape)
                 
                 #print(label.shape)
                 if self.mixedprec:
                     with autocast():
-                        nloss=self.__model__(Vdata.cuda(),Adata.cuda(),label.cuda())
+                        nloss=self.__model__(Vdata.cuda(),label.cuda())
                     self.scaler.scale(nloss).backward()
                     self.scaler.step(self.__optimizer__)
                     self.scaler.update()
                 else:
-                    nloss=self.__model__(Vdata.cuda(),Adata.cuda(),label.cuda())
+                    nloss=self.__model__(Vdata.cuda(),label.cuda())
                     nloss.backward();
                     self.__optimizer__.step();
 
@@ -188,7 +154,7 @@ class ModelTrainer(object):
 
         feats={}
         ## Define test data loader
-        test_dataset =  MMLoader.meta_Dataset(audio_path,frame_path,audio_ext,image_ext,test_path,transform,random_sample=True,clipping_duration=clipping_duration)
+        test_dataset =  VisionLoader.meta_Dataset(audio_path,frame_path,audio_ext,image_ext,test_path,transform,random_sample=random_sample,clipping_duration=clipping_duration)
         test_loader = torch.utils.data.DataLoader(
             test_dataset,
             batch_size=1,
@@ -199,37 +165,36 @@ class ModelTrainer(object):
         ep_acc=0
         ep_cnt=0
         softmax=torch.nn.Softmax(dim=1)
-        for Vdata,Adata,label in tqdm(test_loader):
+        for Vdata,label in tqdm(test_loader):
             
             ##data reshape
             Vdata=Vdata.reshape(-1,Vdata.size()[-3],Vdata.size()[-2],Vdata.size()[-1]) #[batch,3,244,244]
             
             #Adata=Adata.squeeze(dim=1) #[batch,48000]
             # print(Adata.shape)
-            Adata=Adata.unsqueeze(1)
-            # Adata= numpy.repeat(Adata,3,axis=1)
-            output= self.__model__(Vdata.cuda(),Adata.cuda())
+            # Adata=Adata.unsqueeze(1)
+            output= self.__model__(Vdata.cuda())
             #output=torch.nn.Softmax(output,dim=1)
 
             ## Find predicted label
             #output=output.squeeze(2)
-            #!! output = self.__model__.__L__.fc_layer(output)
+            output = self.__model__.__L__.fc_layer(output)
             #print("raw output: ",output)
             #print("raw argmax: ",torch.argmax(output,dim=1))
-            #!! output=softmax(output)
+            output=softmax(output)
             #print("softmax output: ",output)
             #print("eval output shape: ",output.shape)
-            #!! label_pred = torch.argmax(output,dim=1) 
+            label_pred = torch.argmax(output,dim=1) 
             #print("label: ",label)
             #print("label_pred: ",label_pred)
-            #!! ep_acc  += (label_pred.detach().cpu() ==label).sum().item()
+            ep_acc  += (label_pred.detach().cpu() ==label).sum().item()
             #ep_loss += self.__model__(output,label) * len(Vdata)
-            #!! ep_cnt  += len(Adata)
+            ep_cnt  += len(Vdata)
             #print(ep_acc)
             #print(ep_cnt)
 
-        #!! acc= ep_acc / ep_cnt
-        return output
+        acc= ep_acc / ep_cnt
+        return acc
 
             
 
@@ -241,7 +206,7 @@ class ModelTrainer(object):
     ## ===== ===== ===== ===== ===== ===== =====
     def saveParameters(self,path):
 
-        torch.save(self.__model__.__A__.state_dict(),path);
+        torch.save(self.__model__.state_dict(),path);
 
     ## ===== ===== ===== ===== ===== ===== ===== 
     ## Load Parameters
