@@ -11,6 +11,11 @@ from SpectroLoader import *
 
 import torchvision.transforms as transforms
 
+import wandb
+
+wandb.init(project="VGGsound", entity="seongyu")
+
+
 
 ## ==== ==== ==== ==== ==== ==== ==== 
 ##  Parse arguments
@@ -19,7 +24,7 @@ import torchvision.transforms as transforms
 parser=argparse.ArgumentParser(description = "VGGsound training");
 
 ## Data Loader
-parser.add_argument('--batch_size',         type=int,   default=128,  help='Batch size');
+parser.add_argument('--batch_size',         type=int,   default=64,  help='Batch size');
 parser.add_argument('--nDataLoaderThread',  type=int,   default=6,    help='Number of loader threads');
 parser.add_argument('--clipping_duration',  type=int,   default=3,    help='How long to cut audio clips');
 parser.add_argument('--random_sample',      type=bool,  default=False, help='random sampling(True) or middle sampling(False)');
@@ -37,13 +42,13 @@ parser.add_argument('--audio_ext',          type=str,   default="wav",  help='ex
 parser.add_argument('--test_interval',      type=int,   default=5,      help='Test and save every [test_interval] epochs');
 parser.add_argument('--max_epoch',          type=int,   default=100,    help='Maximum number of epochs');
 parser.add_argument('--trainfunc',          type=str,   default='CEloss', help='loss function');
-parser.add_argument('--get_pretrained',     type=bool,  default=True,  help='whether load pretrained resnet or not')
+parser.add_argument('--get_pretrained',     type=bool,  default=False,  help='whether load pretrained resnet or not')
 
 ## Optimizer
 parser.add_argument('--optimizer',          type=str,   default='adam', help='optimizer');
 parser.add_argument('--scheduler',          type=str,   default='ExponentialLR', help='learning rate scheduler');
 parser.add_argument('--lr',                 type=float, default=1e-3, help='learning rate');
-parser.add_argument('--lr_decay',           type=float, default=0.998, help='Learningrate decay every [test_interval] epochs');
+parser.add_argument('--lr_decay',           type=float, default=0.98, help='Learningrate decay every [test_interval] epochs');
 parser.add_argument('--weight_decay',      type=float, default=1e-4, help='weight decay in the optimizer');
 
 ## Loss functions
@@ -73,6 +78,12 @@ parser.add_argument('--model_index',        type=int,   default=0,          help
 ##
 
 args = parser.parse_args();
+
+wandb.config = {
+  "learning_rate": args.lr,
+  "epochs": args.max_epoch,
+  "batch_size": args.batch_size
+}
 
 
 ## ==== ==== ==== ==== ==== ==== ==== 
@@ -180,10 +191,14 @@ def main_worker(args):
             print("IT {:d}, accuracy {:.5f}".format(it, acc));
             scorefile.write("IT {:d}, accuracy {:.5f}".format(it, acc));
             trainer.saveParameters(args.save_path+"/model{:09d}.model".format(it));
+            wandb.log({"accuracy": acc})
         
         print(time.strftime("%Y-%m-%d %H:%M:%S"),"TLOSS {:5f}".format(loss))
         scorefile.write("IT {:d}, TLOSS {:.5f} with LR ".format(it,loss)+str(clr)+"\n")
         scorefile.flush()
+        wandb.log({"loss": loss})
+        
+        
     scorefile.close()
 ## ==== ==== ==== ==== ==== ==== ==== 
 ## Main function

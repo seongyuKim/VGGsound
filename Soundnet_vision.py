@@ -12,7 +12,7 @@ class VisionNet(nn.Module):
         super(VisionNet,self).__init__();
         ##__S__ is the embedding model
         VisionNetModel=importlib.import_module('models.'+ vision_model).__getattribute__('MainModel')
-        if get_pretrained:
+        if get_pretrained==True:
             self.__S__ = VisionNetModel(**kwargs,weights='IMAGENET1K_V1')
             print("pretrained ResNet is loaded")
         else:
@@ -44,7 +44,7 @@ class AudioNet(nn.Module):
         super(AudioNet,self).__init__();
         ##__S__ is the embedding model
         AudioNetModel=importlib.import_module('models.'+ audio_model).__getattribute__('MainModel')
-        if get_pretrained:
+        if get_pretrained == True:
             self.__S__ = AudioNetModel(**kwargs,weights='IMAGENET1K_V1')
             print("pretrained ResNet is loaded")
         else:

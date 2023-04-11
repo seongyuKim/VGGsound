@@ -90,6 +90,9 @@ class meta_Dataset(Dataset):
         '''
         #print(len(self.label_dict.values()))
         print('{:d} files of {:d} classes found'.format(len(self.label_dict),len(self.class2num_dict.values())))
+
+        if self.clipdur == 10:
+            print("NO clipping Audio")
         
     def __getitem__(self,index):
         
@@ -162,34 +165,40 @@ class meta_Dataset(Dataset):
         # print("waveform shape: ",waveform.shape)
         totlen=new_waveform.shape[-1]
         assert totlen >= (self.new_sample_rate * self.clipdur),"weird audio file {}".format(str(list(self.label_dict.keys())[index]))
-            
+
+        if self.clipdur == 10 :
+            clipped_waveform = new_waveform
+            del new_waveform
         #print(totlen)
             ## ==== ==== ==== ====
             ## random sampling
             ## ==== ==== ==== ====
-        if self.random_sample:
-            frac= sample_frame/tot_frames
-            random_point_a = int(totlen*frac)
-            start = int(random_point_a - int((self.clipdur/2)*self.new_sample_rate))
-            end   = int(random_point_a + int((self.clipdur/2)*self.new_sample_rate))
-            ###print("%s is the sampled point of %s samples"%(random_point_a,totlen))
-            
-            ## ==== ==== ==== ====
-            ## mid point sampling
-            ## ==== ==== ==== ====
         else:
-            mid_point_a = math.ceil((totlen/2))
-            start = int(mid_point_a - int((self.clipdur/2)*self.new_sample_rate))
-            end   = int(mid_point_a + int((self.clipdur/2)*self.new_sample_rate))
-            ###print("%s is the middle point of %s samples"%(mid_point_a,totlen))
-            
-        keep_samples= int(self.new_sample_rate * self.clipdur)  
-        if (start <= 0) :
-            clipped_waveform=new_waveform[:keep_samples]
-        elif (end >= totlen):
-            clipped_waveform= new_waveform[totlen-keep_samples:]
-        else:
-            clipped_waveform = new_waveform[start:end]
+            if self.random_sample:
+                frac= sample_frame/tot_frames
+                random_point_a = int(totlen*frac)
+                start = int(random_point_a - int((self.clipdur/2)*self.new_sample_rate))
+                end   = int(random_point_a + int((self.clipdur/2)*self.new_sample_rate))
+                ###print("%s is the sampled point of %s samples"%(random_point_a,totlen))
+                
+                ## ==== ==== ==== ====
+                ## mid point sampling
+                ## ==== ==== ==== ====
+            else:
+                mid_point_a = math.ceil((totlen/2))
+                start = int(mid_point_a - int((self.clipdur/2)*self.new_sample_rate))
+                end   = int(mid_point_a + int((self.clipdur/2)*self.new_sample_rate))
+                ###print("%s is the middle point of %s samples"%(mid_point_a,totlen))
+                
+            keep_samples= int(self.new_sample_rate * self.clipdur)  
+            if (start <= 0) :
+                clipped_waveform=new_waveform[:keep_samples]
+            elif (end >= totlen):
+                clipped_waveform= new_waveform[totlen-keep_samples:]
+            else:
+                clipped_waveform = new_waveform[start:end]
+
+        
 
         #torchaudio.save('loaded_data_%s.audio.wav'%(list(self.label_dict.keys())[index],index),clipped_waveform,sample_rate)
         

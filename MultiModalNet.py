@@ -6,6 +6,7 @@ import time,importlib
 import MMLoader
 from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
+import sklearn.metrics
 
 class VisionNet(nn.Module):
     def __init__(self,vision_model,optimizer,vision_loss,get_pretrained,**kwargs):
@@ -96,6 +97,104 @@ class NOfusionMM(nn.Module):
         audio_feature = self.__S__.forward(audio_data)
         kldloss=self.__D__(vision_feature,audio_feature)
         return kldloss
+    
+class ConcatMM(nn.Module):
+    def __init__(self,V_initial_model,vision_model,vision_loss,A_initial_model,audio_model,audio_loss,get_pretrained, trainfunc,**kwargs):
+        super(ConcatMM,self).__init__();
+        print(get_pretrained)
+        V = VisionNet(vision_model=vision_model,vision_loss=vision_loss,get_pretrained=get_pretrained,**kwargs)
+        A = AudioNet(audio_model=audio_model,audio_loss=audio_loss,get_pretrained=False,**kwargs)
+
+        if V_initial_model != "":
+            print("model from {} loaded".format(V_initial_model))
+            V.load_state_dict(torch.load(V_initial_model))
+        if A_initial_model != "":
+            print("model from {} loaded".format(A_initial_model))
+            A.load_state_dict(torch.load(A_initial_model))
+
+        self.__V__=V
+        self.__A__=A
+        self.__VS__ = V.__S__
+        ### freeze vision extractor
+        for param in self.__VS__.parameters():
+            param.requires_grad =False
+        self.__VL__ = V.__L__
+        self.__S__ = A.__S__
+        self.__L__ = A.__L__
+
+        LossFunction = importlib.import_module('loss.'+ trainfunc).__getattribute__('LossFunction')
+        print("it's Loss for Multimodal Concat")
+        self.__D__ = LossFunction(**kwargs)
+
+    def forward(self, vision_data,audio_data,label=None):
+        
+        vision_feature = self.__VS__.forward(vision_data)
+        audio_feature = self.__S__.forward(audio_data)
+        
+        #print(vision_feature.shape)
+        #print(audio_feature.shape)
+
+        concat_feature = torch.cat([vision_feature,audio_feature],dim=1)
+
+        if label== None:
+             return concat_feature
+        else:
+            nloss=self.__D__.forward(concat_feature,label)
+            return nloss
+        
+class DLConcatMM(nn.Module):
+    def __init__(self,V_initial_model,vision_model,vision_loss,A_initial_model,audio_model,audio_loss,get_pretrained, trainfunc,**kwargs):
+        super(DLConcatMM,self).__init__();
+
+        print(get_pretrained)
+        V = VisionNet(vision_model=vision_model,vision_loss=vision_loss,get_pretrained=False,**kwargs)
+        A = AudioNet(audio_model=audio_model,audio_loss=audio_loss,get_pretrained=False,**kwargs)
+
+        if V_initial_model != "":
+            print("model from {} loaded".format(V_initial_model))
+            V.load_state_dict(torch.load(V_initial_model))
+        if A_initial_model != "":
+            print("model from {} loaded".format(A_initial_model))
+            A.load_state_dict(torch.load(A_initial_model))
+
+        self.__V__=V
+        self.__A__=A
+        self.__VS__ = V.__S__
+        ### freeze vision extractor
+        for param in self.__VS__.parameters():
+            param.requires_grad =False
+        self.__VL__ = V.__L__
+        self.__S__ = A.__S__
+        self.__AL__ = A.__L__
+
+        LossFunction = importlib.import_module('loss.'+ trainfunc).__getattribute__('LossFunction')
+        print("it's Loss for Multimodal Concat")
+        self.__D__ = LossFunction(**kwargs)
+
+
+    def forward(self, vision_data,audio_data,label=None):
+        
+        vision_feature = self.__VS__.forward(vision_data)
+        audio_feature = self.__S__.forward(audio_data)
+        
+        #print(vision_feature.shape)
+        #print(audio_feature.shape)
+
+        concat_feature = torch.cat([vision_feature,audio_feature],dim=1)
+
+        if label== None:
+             return concat_feature
+        else:
+            V_LOSS = self.__VL__.forward(vision_feature,label)
+            A_LOSS = self.__AL__.forward(audio_feature,label)
+            C_LOSS = self.__D__.forward(concat_feature,label)
+
+            nloss = C_LOSS + 0.1*V_LOSS + 0.1*A_LOSS
+            return nloss
+
+
+        
+
 
 
 
@@ -183,7 +282,7 @@ class ModelTrainer(object):
     ## Evaluate from list
     ## ===== ===== ===== ===== ===== ===== ===== 
 
-    def evaluateFromList(self,test_path,audio_path,frame_path,audio_ext,image_ext,random_sample,clipping_duration,nDataLoaderThread, transform,batch_size,**kwargs):
+    def evaluateFromList(self,test_path,audio_path,frame_path,audio_ext,image_ext,random_sample,clipping_duration,nDataLoaderThread, transform,batch_size,nClasses,**kwargs):
         self.__model__.eval();
 
         feats={}
@@ -199,8 +298,16 @@ class ModelTrainer(object):
         ep_acc=0
         ep_cnt=0
         softmax=torch.nn.Softmax(dim=1)
-        for Vdata,Adata,label in tqdm(test_loader):
-            
+        
+        mAP=0
+        test_len=len(test_dataset)
+        pred_array=numpy.zeros([test_len,nClasses])
+        gt_array=numpy.zeros([test_len,nClasses])
+
+        for count,datas in enumerate(tqdm(test_loader)):
+            Vdata=datas[0]
+            Adata=datas[1]
+            label=datas[2]
             ##data reshape
             Vdata=Vdata.reshape(-1,Vdata.size()[-3],Vdata.size()[-2],Vdata.size()[-1]) #[batch,3,244,244]
             
@@ -213,23 +320,29 @@ class ModelTrainer(object):
 
             ## Find predicted label
             #output=output.squeeze(2)
-            #!! output = self.__model__.__L__.fc_layer(output)
-            #print("raw output: ",output)
-            #print("raw argmax: ",torch.argmax(output,dim=1))
-            #!! output=softmax(output)
-            #print("softmax output: ",output)
-            #print("eval output shape: ",output.shape)
-            #!! label_pred = torch.argmax(output,dim=1) 
-            #print("label: ",label)
-            #print("label_pred: ",label_pred)
-            #!! ep_acc  += (label_pred.detach().cpu() ==label).sum().item()
-            #ep_loss += self.__model__(output,label) * len(Vdata)
-            #!! ep_cnt  += len(Adata)
-            #print(ep_acc)
-            #print(ep_cnt)
+            output = self.__model__.__D__.fc_layer(output)
+            output=softmax(output)
+            #label_pred = torch.argmax(output,dim=1) 
+            
 
-        #!! acc= ep_acc / ep_cnt
-        return output
+            ## ===== ===== ===== ===== ===== 
+            ## accuracy
+            ## ===== ===== ===== ===== =====
+            # ep_acc  += (label_pred.detach().cpu() ==label).sum().item()
+            # ep_cnt  += len(Adata)
+            
+            ## ===== ===== ===== ===== ===== 
+            ## mAP
+            ## ===== ===== ===== ===== =====
+            # label=F.one_hot(label,num_classes=nClasses)
+            #label_pred=F.one_hot(label_pred,num_classes=nClasses)
+            
+            pred_array[count,:]=output.detach().cpu().numpy()
+            gt_array[count,int(label)]=1
+            
+        stats = calculate_stats(pred_array,gt_array)
+        mAP = numpy.mean([stat['AP'] for stat in stats])
+        return mAP
 
             
 
@@ -260,5 +373,49 @@ class ModelTrainer(object):
                 print("Wrong parameter length: {},model: {}.loaded: {}".format(origname,self_state[name].size(),loaded_state[origname.size()]))
                 continue
             self_state[name].copy_(param); # want to copy params for loaded model to the now model
+
+### ===== ===== ===== ===== =====
+### for calculating mAP
+### ===== ===== ===== ===== =====
+def calculate_stats(output, target):
+    
+    """Calculate statistics including mAP, AUC, etc.
+    Args:
+    output: 2d array, (samples_num, classes_num)
+    target: 2d array, (samples_num, classes_num)
+    Returns:
+    stats: list of statistic of each class.
+    """
+
+    classes_num = target.shape[-1]
+    stats = []
+
+    # Class-wise statistics
+    for k in range(classes_num):
+
+        # Average precision
+        avg_precision = sklearn.metrics.average_precision_score(
+            target[:, k], output[:, k], average=None)
+
+        # AUC
+        auc = sklearn.metrics.roc_auc_score(target[:, k], output[:, k], average=None)
+
+        # Precisions, recalls
+        (precisions, recalls, thresholds) = sklearn.metrics.precision_recall_curve(
+            target[:, k], output[:, k])
+
+        # FPR, TPR
+        (fpr, tpr, thresholds) = sklearn.metrics.roc_curve(target[:, k], output[:, k])
+
+        save_every_steps = 1000     # Sample statistics to reduce size
+        dict = {'precisions': precisions[0::save_every_steps],
+                'recalls': recalls[0::save_every_steps],
+                'AP': avg_precision,
+                'fpr': fpr[0::save_every_steps],
+                'fnr': 1. - tpr[0::save_every_steps],
+                'auc': auc}
+        stats.append(dict)
+
+    return stats
 
         

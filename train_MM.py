@@ -11,6 +11,9 @@ from MMLoader import *
 
 import torchvision.transforms as transforms
 
+import wandb
+
+wandb.init(project="VGGsound_Concat", entity="seongyu")
 
 ## ==== ==== ==== ==== ==== ==== ==== 
 ##  Parse arguments
@@ -62,6 +65,7 @@ parser.add_argument('--vision_loss',               type=str,   default='CEloss',
 parser.add_argument('--audio_model',              type=str,   default='ResNet18_Audio', help='Name of audio model definition');
 parser.add_argument('--audio_loss',                 type=str,   default='CEloss', help='loss function for audio network');
 parser.add_argument('--nOut',               type=int,   default=1000,        help='Embedding size in the last FC layer');
+parser.add_argument('--ConOut', type=int,   default=2000,   help='Embedding size in the last FC layer with concat feature')
 parser.add_argument('--nClasses',           type=int,   default=309,        help='number of classes in VGGsound dataset')
 
 ## Training
@@ -70,9 +74,16 @@ parser.add_argument('--mixedprec',      dest='mixedprec',   action='store_true',
 parser.add_argument('--model_index',        type=int,   default=0,          help='choose model[vision(0),audio(1),multimodal(2)]')
 
 ## additional arguments
-##
+parser.add_argument('--V_initial_model',    type=str,   default="", help= "load trained Vision model");
+parser.add_argument('--A_initial_model',    type=str,   default="", help= "load trained Audio model");
 
 args = parser.parse_args();
+
+wandb.config = {
+  "learning_rate": args.lr,
+  "epochs": args.max_epoch,
+  "batch_size": args.batch_size
+}
 
 
 ## ==== ==== ==== ==== ==== ==== ==== 
@@ -95,11 +106,17 @@ def main_worker(args):
         print('Choosing AudioNet!')
         ChosenNet=AudioNet(**vars(args)).cuda()
     elif args.model_index == 2:
-        print('Choosing MultimodalNet!')
+        print('Choosing NoFusionMM (for Distillation)!')
         ChosenNet=NOfusionMM(**vars(args)).cuda()
         #ChosenNet= MultimodalNet(**vars(args)).cuda()
+    elif args.model_index == 3 :
+        print('Choosing ConcatMM (for using concat loss)')
+        ChosenNet=ConcatMM(**vars(args)).cuda()
+    elif args.model_index == 4 :
+        print('Choosing DLConcatMM (for combine concat loss)')
+        ChosenNet=DLConcatMM(**vars(args)).cuda()
     else:
-        assert args.model_index <= 2, 'wrong model index, choose between 0~2'
+        assert args.model_index <= 4, 'wrong model index, choose between 0~4'
     
     
 
@@ -178,13 +195,16 @@ def main_worker(args):
 
         if it % args.test_interval==0:
             acc = trainer.evaluateFromList(test_path=args.test_list_path,transform=test_transform, **vars(args))
-            print("IT {:d}, accuracy {:.5f}".format(it, acc));
-            scorefile.write("IT {:d}, accuracy {:.5f}".format(it, acc));
+            print("IT {:d}, mAP {:.5f}".format(it, acc));
+            scorefile.write("IT {:d}, mAP {:.5f}".format(it, acc));
             trainer.saveParameters(args.save_path+"/model{:09d}.model".format(it));
+            wandb.log({"mAP": acc})
         
         print(time.strftime("%Y-%m-%d %H:%M:%S"),"TLOSS {:5f}".format(loss))
         scorefile.write("IT {:d}, TLOSS {:.5f} with LR ".format(it,loss)+str(clr)+"\n")
         scorefile.flush()
+        wandb.log({"loss": loss})
+
     scorefile.close()
 ## ==== ==== ==== ==== ==== ==== ==== 
 ## Main function

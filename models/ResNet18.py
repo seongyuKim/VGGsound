@@ -1,6 +1,6 @@
 import torchvision
 
-def MainModel(pretrained,nOut=512,**kwargs):
+def MainModel(weights,nOut,**kwargs):
     
     
-    return torchvision.models.resnet18(num_classes=nOut,pretrained=pretrained)
+    return torchvision.models.resnet18(num_classes=nOut,weights=weights)

@@ -19,7 +19,7 @@ import torchvision.transforms as transforms
 parser=argparse.ArgumentParser(description = "VGGsound training");
 
 ## Data Loader
-parser.add_argument('--batch_size',         type=int,   default=128,  help='Batch size');
+parser.add_argument('--batch_size',         type=int,   default=64,  help='Batch size');
 parser.add_argument('--nDataLoaderThread',  type=int,   default=6,    help='Number of loader threads');
 parser.add_argument('--clipping_duration',  type=int,   default=3,    help='How long to cut audio clips');
 parser.add_argument('--random_sample',      type=bool,  default=False, help='random sampling(True) or middle sampling(False)');
@@ -32,18 +32,19 @@ parser.add_argument('--frame_path',         type=str,   default="/home/seon/work
 parser.add_argument('--audio_path',         type=str,   default="/home/seon/workspace/SoundNet/VGGSound_final/audio/",  help='path to the VGGsound audio data');
 parser.add_argument('--image_ext',          type=str,   default="jpg",  help='extension of frame data');
 parser.add_argument('--audio_ext',          type=str,   default="wav",  help='extension of audio data');
+parser.add_argument('--get_pretrained',     type=bool,  default= False,     help='whether load pretrained resnet or not');
 
 ## Training details
 parser.add_argument('--test_interval',      type=int,   default=5,      help='Test and save every [test_interval] epochs');
 parser.add_argument('--max_epoch',          type=int,   default=100,    help='Maximum number of epochs');
 parser.add_argument('--trainfunc',          type=str,   default='CEloss', help='loss function');
-parser.add_argument('--get_pretrained',     type=bool,  default=False,  help='whether load pretrained resnet or not')
+
 
 ## Optimizer
 parser.add_argument('--optimizer',          type=str,   default='adam', help='optimizer');
 parser.add_argument('--scheduler',          type=str,   default='ExponentialLR', help='learning rate scheduler');
 parser.add_argument('--lr',                 type=float, default=1e-3, help='learning rate');
-parser.add_argument('--lr_decay',           type=float, default=0.998, help='Learningrate decay every [test_interval] epochs');
+parser.add_argument('--lr_decay',           type=float, default=0.99, help='Learningrate decay every [test_interval] epochs');
 parser.add_argument('--weight_decay',      type=float, default=1e-4, help='weight decay in the optimizer');
 
 ## Loss functions
@@ -70,7 +71,9 @@ parser.add_argument('--mixedprec',      dest='mixedprec',   action='store_true',
 parser.add_argument('--model_index',        type=int,   default=0,          help='choose model[vision(0),audio(1),multimodal(2)]')
 
 ## additional arguments
-##
+parser.add_argument('--augment',        type=str,   default="",  help='data augmentation while training');
+parser.add_argument('--rotate_angle',   type=int,   default=30,  help='angle used for RandomRotation of data augmentation');
+
 
 args = parser.parse_args();
 
@@ -105,11 +108,27 @@ def main_worker(args):
     it = 1
 
     ## Input transformations for training
-    train_transform= transforms.Compose(
-        [transforms.ToTensor(),
-        transforms.Resize(256),
-        transforms.RandomCrop([224,224]),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+        ## Input transformations for training
+    if (args.augment == ""):
+        train_transform = transforms.Compose(
+            [transforms.ToTensor(),
+            transforms.Resize(256),
+            transforms.RandomCrop([224,224]),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+    else:
+        print("Data Augmentation will be done")
+        train_transform = transforms.Compose(
+            [transforms.ToTensor(),
+            transforms.Resize(256),
+            transforms.RandomCrop([224,224]),
+            ### augmentation more
+            transforms.RandomHorizontalFlip(0.5),
+            transforms.RandomVerticalFlip(0.3),
+            transforms.RandomRotation(args.rotate_angle),
+            ### augmentation much more
+            transforms.ColorJitter(brightness=(0,1),saturation=(0,1),hue=0),
+            #transforms.RandomErasing(p=0.1,scale=(0.02, 0.33), ratio=(0.3, 3.3)),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
 
     ## Input transformations for evaluation

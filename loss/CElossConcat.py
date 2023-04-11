@@ -4,11 +4,11 @@ import torch.nn.functional as F
 import time, pdb, numpy
 
 class LossFunction(nn.Module):
-    def __init__(self,nOut,nClasses,**kwargs):
+    def __init__(self,ConOut,nClasses,**kwargs):
         super(LossFunction,self).__init__()
 		
         self.criterion=torch.nn.CrossEntropyLoss()
-        self.fc_layer=nn.Linear(nOut,nClasses)
+        self.fc_layer=nn.Linear(ConOut,nClasses)
         
         print('==> Initialised CE Loss.')
         print("-------------------------")
